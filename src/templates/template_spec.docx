@@ -1,0 +1,52 @@
+import os
+from docx import Document
+
+
+def create_spec_template():
+    doc = Document()
+
+    headings = [
+        "Introduction",
+        "Contexte",
+        "Acteurs",
+        "Exigences fonctionnelles",
+        "Contraintes",
+        "Glossaire"
+    ]
+
+    for heading in headings:
+        doc.add_heading(heading, level=1)
+        doc.add_paragraph("")
+
+    doc.add_heading("Règles de validation", level=2)
+    table = doc.add_table(rows=1, cols=3)
+    table.style = "Table Grid"
+
+    header_cells = table.rows[0].cells
+    header_cells[0].text = "Section"
+    header_cells[1].text = "Obligatoire"
+    header_cells[2].text = "Mots minimum"
+
+    rules = [
+        ("Introduction", "Oui", "50"),
+        ("Contexte", "Oui", "100"),
+        ("Acteurs", "Oui", "30"),
+        ("Exigences fonctionnelles", "Oui", "200"),
+        ("Contraintes", "Oui", "50"),
+        ("Glossaire", "Non", "20"),
+        ("Total document", "Oui", "500")
+    ]
+
+    for section, mandatory, min_words in rules:
+        row_cells = table.add_row().cells
+        row_cells[0].text = section
+        row_cells[1].text = mandatory
+        row_cells[2].text = min_words
+
+    output_path = os.path.join("src", "templates", "template_spec.docx")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    doc.save(output_path)
+
+
+if __name__ == "__main__":
+    create_spec_template()

@@ -1,78 +1,82 @@
+import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Dict, Any, List
 
-from docx import Document
-# SELF-HEAL: Use absolute import for consistency with other modules and reliable module resolution
-from src.linters.base_linter import BaseLinter
+from .base_linter import BaseLinter
 
 
 class SpecLinter(BaseLinter):
     """
-    Linter déterministe pour les documents SPEC.
-    Valide la structure, les compteurs de mots et les règles métier spécifiques (ex: EF-<n>).
+    Concrete linter for SPEC documents.
+    Extends BaseLinter to enforce SPEC-specific rules, including requirement ID validation.
     """
+    
+    TEMPLATE_FILENAME = "template_spec.docx"
+    REQUIREMENT_ID_PATTERN = re.compile(r'\bEF-\d+\b')
+    REQUIREMENTS_SECTION_NAME = "Exigences fonctionnelles"
 
-    # SELF-HEAL: Convert Path to string to match BaseLinter type hints
-    TEMPLATE_PATH = str(Path(__file__).resolve().parent.parent / "templates" / "template_spec.docx")
-    REQUIREMENT_ID_PATTERN = re.compile(r"\bEF-\d+\b")
+    def __init__(self, template_dir: str = None):
+        if template_dir is None:
+            # SELF-HEAL: Fixed path resolution to correctly point to src/templates/ (parent.parent instead of parent)
+            template_dir = str(Path(__file__).resolve().parent.parent / "templates")
+        super().__init__(os.path.join(template_dir, self.TEMPLATE_FILENAME))
 
-    def __init__(self, template_path: Union[str, Path, None] = None):
-        # SELF-HEAL: Ensure template_path is cast to string for BaseLinter compatibility
-        super().__init__(template_path=str(template_path or self.TEMPLATE_PATH))
-
-    def validate(self, document_path: Union[str, Path]) -> Dict[str, Any]:
+    def validate(self, document_path: str) -> Dict[str, Any]:
         """
-        Valide un document SPEC complet contre les règles du template et les contraintes métier.
+        Validates the SPEC document against template rules and SPEC-specific constraints.
         
         Args:
-            document_path: Chemin vers le fichier .docx à valider.
+            document_path: Path to the .docx file to validate.
             
         Returns:
-            Dictionnaire de rapport de conformité structuré.
+            A dictionary containing validation results and actionable feedback.
         """
-        report = super().validate(str(document_path))
+        # Run base validation (headings, mandatory sections, word counts)
+        report = super().validate(document_path)
         
-        # Si le document échoue déjà aux règles de base, on retourne le rapport tel quel.
-        if not report.get("valid", False):
-            return report
-
-        # Vérification spécifique SPEC : présence d'au moins un ID EF-<n>
-        doc = Document(str(document_path))
-        req_section_text = self._extract_section_text(doc, "Exigences fonctionnelles")
+        # Run SPEC-specific validation
+        spec_issues = self._validate_requirement_ids(document_path)
         
-        if req_section_text:
-            if not self.REQUIREMENT_ID_PATTERN.search(req_section_text):
-                report["valid"] = False
-                report.setdefault("spec_violations", []).append(
-                    "Aucun identifiant de type 'EF-<n>' trouvé dans la section 'Exigences fonctionnelles'."
-                )
-        else:
-            report.setdefault("spec_violations", []).append(
-                "Section 'Exigences fonctionnelles' introuvable ou vide, impossible de valider les identifiants EF-<n>."
-            )
-
+        if spec_issues:
+            report.setdefault("spec_violations", []).extend(spec_issues)
+            report["is_valid"] = False
+            
         return report
 
-    @staticmethod
-    def _extract_section_text(doc: Document, heading: str) -> str:
+    def _validate_requirement_ids(self, document_path: str) -> List[str]:
         """
-        Extrait le texte contenu sous un titre spécifique jusqu'au prochain titre de même niveau ou supérieur.
+        Ensures the 'Exigences fonctionnelles' section contains at least one requirement ID (EF-<n>).
         """
-        text_parts = []
-        capturing = False
-        
-        for para in doc.paragraphs:
-            # SELF-HEAL: Added null check for para.style to prevent AttributeError
-            is_heading = para.style.name.startswith("Heading") if para.style else False
-            # SELF-HEAL: Use exact match instead of substring to prevent false positives on similar headings
-            if is_heading and para.text.strip() == heading:
-                capturing = True
-                continue
-            
-            if capturing:
-                if is_heading:
-                    break
-                text_parts.append(para.text)
-                
-        return " ".join(text_parts)
+        from docx import Document
+        try:
+            doc = Document(document_path)
+        except Exception as e:
+            return [f"Erreur lors de la lecture du document : {e}"]
+
+        in_requirements_section = False
+        found_requirement_id = False
+
+        for paragraph in doc.paragraphs:
+            style_name = paragraph.style.name if paragraph.style else ""
+            text = paragraph.text.strip()
+
+            # SELF-HEAL: Added support for French 'Titre 1' heading style alongside English 'Heading 1'
+            if style_name in ('Heading 1', 'Titre 1'):
+                if self.REQUIREMENTS_SECTION_NAME.lower() in text.lower():
+                    in_requirements_section = True
+                else:
+                    if in_requirements_section:
+                        in_requirements_section = False
+                        break  # Section ended, stop scanning
+
+            # Check for EF-<n> pattern within the target section
+            if in_requirements_section and self.REQUIREMENT_ID_PATTERN.search(text):
+                found_requirement_id = True
+                break
+
+        if not found_requirement_id:
+            return [
+                f"La section '{self.REQUIREMENTS_SECTION_NAME}' doit contenir au moins un identifiant d'exigence (format: EF-<n>)."
+            ]
+        return []

@@ -1,39 +1,50 @@
 import os
-from typing import Any, Dict
+from typing import Union, Dict, Any
 
-from src.linters.base_linter import BaseLinter
-
-# Resolve template path relative to the project structure
-_LINTER_DIR = os.path.dirname(os.path.abspath(__file__))
-_TEMPLATE_DIR = os.path.join(_LINTER_DIR, "..", "templates")
-_ARCHI_TEMPLATE_PATH = os.path.join(_TEMPLATE_DIR, "template_archi.docx")
+# SELF-HEAL: Changed to relative import for consistency and package safety
+from .base_linter import BaseLinter
 
 
 class ArchiLinter(BaseLinter):
     """
-    Deterministic linter for Architecture documents.
-    
-    Extends BaseLinter to enforce structural compliance and minimum word counts
-    based on the rules defined in `template_archi.docx`.
+    Concrete linter for Architecture documents.
+    Extends BaseLinter to enforce structural and content rules defined in template_archi.docx.
     """
 
-    def __init__(self, template_path: str = _ARCHI_TEMPLATE_PATH) -> None:
-        # SELF-HEAL: Removed unsupported 'doc_type' argument from super().__init__ call
-        super().__init__(template_path=template_path)
+    def __init__(self) -> None:
+        # Resolve template path relative to the project structure (src/templates/)
+        _base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _template_path = os.path.join(_base_dir, "templates", "template_archi.docx")
+        super().__init__(_template_path)
 
-    def validate(self, document_path: str) -> Dict[str, Any]:
+    def validate(self, document_path_or_bytes: Union[str, bytes]) -> Dict[str, Any]:
         """
-        Validates an architecture document against the reference template.
+        Validates an architecture document against the loaded template rules.
         
         Args:
-            document_path: Absolute or relative path to the .docx file to validate.
+            document_path_or_bytes: Path to the .docx file or raw bytes.
             
         Returns:
-            A structured report containing:
-                - valid (bool): Overall compliance status.
-                - missing_sections (List[str]): Sections marked mandatory but absent.
-                - word_count_violations (List[Dict]): Sections failing minimum word count.
-                - total_words (int): Actual total word count of the document.
-                - errors (List[str]): Any parsing or structural errors encountered.
+            A structured validation report containing:
+            - valid (bool): Overall compliance status.
+            - missing_sections (list): Sections marked mandatory but absent.
+            - word_count_violations (list): Sections failing minimum word count.
+            - total_words (int): Total word count of the document.
         """
-        return super().validate(document_path)
+        # SELF-HEAL: BaseLinter.validate expects a string path. Handle bytes input safely via temp file.
+        if isinstance(document_path_or_bytes, bytes):
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+                tmp.write(document_path_or_bytes)
+                doc_path = tmp.name
+        else:
+            doc_path = document_path_or_bytes
+            
+        try:
+            # SELF-HEAL: Wrapped validation in try/finally to ensure temp file cleanup on success or failure
+            report = super().validate(doc_path)
+        finally:
+            if isinstance(document_path_or_bytes, bytes):
+                os.unlink(doc_path)
+                
+        return report

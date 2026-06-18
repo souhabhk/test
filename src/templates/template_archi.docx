@@ -1,10 +1,19 @@
-import os
-from docx import Document
+#!/usr/bin/env python3
+"""
+Script to generate the Architecture reference template (template_archi.docx).
+Uses python-docx to create a structured Word document with expected headings
+and a validation rules table editable by BA/PO.
+"""
 
-def generate_template():
-    os.makedirs("src/templates", exist_ok=True)
+from docx import Document
+import os
+import sys
+
+
+def generate_archi_template(output_path: str) -> None:
     doc = Document()
-    
+
+    # Define expected headings with brief placeholder content
     headings = [
         "Vue d'ensemble",
         "Composants",
@@ -13,20 +22,23 @@ def generate_template():
         "Sécurité",
         "Décisions techniques (ADR)"
     ]
-    
-    for heading in headings:
-        doc.add_heading(heading, level=1)
-        doc.add_paragraph("Contenu de la section...")
-        
-    doc.add_heading("Règles de validation", level=2)
+
+    for heading_text in headings:
+        doc.add_heading(heading_text, level=1)
+        doc.add_paragraph(f"Contenu de la section {heading_text}...")
+
+    # Add the validation rules table
+    doc.add_heading("Règles de validation", level=1)
     table = doc.add_table(rows=1, cols=3)
-    table.style = "Table Grid"
-    
-    hdr_cells = table.rows[0].cells
-    hdr_cells[0].text = "Section"
-    hdr_cells[1].text = "Obligatoire"
-    hdr_cells[2].text = "Mots minimum"
-    
+    table.style = 'Table Grid'
+
+    # Header row
+    header_cells = table.rows[0].cells
+    header_cells[0].text = "Section"
+    header_cells[1].text = "Obligatoire"
+    header_cells[2].text = "Mots minimum"
+
+    # Rules data matching the specification
     rules = [
         ("Vue d'ensemble", "Oui", "80"),
         ("Composants", "Oui", "150"),
@@ -36,16 +48,26 @@ def generate_template():
         ("Décisions techniques", "Non", "50"),
         ("Total document", "Oui", "600")
     ]
-    
+
     for section, mandatory, min_words in rules:
         row_cells = table.add_row().cells
         row_cells[0].text = section
         row_cells[1].text = mandatory
         row_cells[2].text = min_words
-        
-    output_path = "src/templates/template_archi.docx"
+
+    # Ensure output directory exists
+    dir_path = os.path.dirname(output_path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
     doc.save(output_path)
-    print(f"Template generated: {output_path}")
+    print(f"Architecture template successfully created at: {output_path}")
+
 
 if __name__ == "__main__":
-    generate_template()
+    target_dir = os.path.dirname(os.path.abspath(__file__)) or "."
+    output_file = os.path.join(target_dir, "template_archi.docx")
+    
+    if len(sys.argv) > 1:
+        output_file = sys.argv[1]
+        
+    generate_archi_template(output_file)

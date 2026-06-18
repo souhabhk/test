@@ -1,10 +1,11 @@
 import os
 from docx import Document
 
-def create_spec_template():
+def generate_spec_template(output_path: str) -> None:
+    """Generates the SPEC reference template .docx with headings and validation rules table."""
     doc = Document()
     
-    headings = [
+    spec_headings = [
         "Introduction",
         "Contexte",
         "Acteurs",
@@ -13,21 +14,20 @@ def create_spec_template():
         "Glossaire"
     ]
     
-    for heading in headings:
-        doc.add_heading(heading, level=1)
-        if heading == "Exigences fonctionnelles":
-            doc.add_paragraph("EF-1: Description de l'exigence fonctionnelle...")
-        else:
-            doc.add_paragraph(f"[Contenu pour {heading}]")
-            
+    for heading_text in spec_headings:
+        doc.add_heading(heading_text, level=1)
+        doc.add_paragraph(f"[Insérer le contenu pour la section {heading_text} ici.]")
+        
     doc.add_heading("Règles de validation", level=1)
     table = doc.add_table(rows=1, cols=3)
-    table.style = "Table Grid"
+    table.style = 'Table Grid'
     
-    for i, header in enumerate(["Section", "Obligatoire", "Mots minimum"]):
-        table.rows[0].cells[i].text = header
-        
-    rules = [
+    header_cells = table.rows[0].cells
+    header_cells[0].text = "Section"
+    header_cells[1].text = "Obligatoire"
+    header_cells[2].text = "Mots minimum"
+    
+    rules_data = [
         ("Introduction", "Oui", "50"),
         ("Contexte", "Oui", "100"),
         ("Acteurs", "Oui", "30"),
@@ -37,15 +37,14 @@ def create_spec_template():
         ("Total document", "Oui", "500")
     ]
     
-    for section, oblig, mots in rules:
-        row = table.add_row()
-        row.cells[0].text = section
-        row.cells[1].text = oblig
-        row.cells[2].text = mots
+    for section, mandatory, min_words in rules_data:
+        row_cells = table.add_row().cells
+        row_cells[0].text = section
+        row_cells[1].text = mandatory
+        row_cells[2].text = min_words
         
-    output_path = os.path.join("src", "templates", "template_spec.docx")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     doc.save(output_path)
 
 if __name__ == "__main__":
-    create_spec_template()
+    generate_spec_template("src/templates/template_spec.docx")

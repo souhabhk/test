@@ -3,119 +3,132 @@ import re
 from abc import ABC
 from typing import Dict, List, Any, Optional
 
-from src.utils.docx_parser import DocxParser
+from docx import Document
+# SELF-HEAL: Changed to relative import for robust package resolution
+from ..utils.docx_parser import parse_template_rules
+
+
+class TemplateParseError(Exception):
+    """Raised when a reference template cannot be parsed or lacks expected structure."""
+    pass
+
 
 class BaseLinter(ABC):
     """
-    Abstract base class for deterministic document linters.
-    Handles template loading, rule evaluation, and word counting.
+    Abstract base class for deterministic document validation.
+    Handles template loading, rule evaluation, and deterministic word counting.
     """
 
     def __init__(self, template_path: str):
-        self._validate_docx_file(template_path)
         if not os.path.exists(template_path):
             raise FileNotFoundError(f"Template not found: {template_path}")
         self.template_path = template_path
-        # SELF-HEAL: Pass template_path to DocxParser constructor instead of calling it without arguments
-        self._parser = DocxParser(template_path)
-        self._cached_rules: Optional[List[Dict[str, Any]]] = None
-        self._cached_headings: Optional[List[str]] = None
+        self._rules_cache: Optional[List[Dict[str, Any]]] = None
 
-    @staticmethod
-    def _validate_docx_file(path: str) -> None:
-        if not path.lower().endswith('.docx'):
-            raise ValueError(f"Expected .docx file, got: {path}")
-
-    def load_template(self) -> None:
-        """Loads and parses the template, caching rules and headings."""
-        # SELF-HEAL: Use correct DocxParser methods instead of non-existent parse_template
-        self._cached_headings = self._parser.extract_headings()
-        self._cached_rules = self._parser.parse_rules_table()
+    def load_template(self) -> List[Dict[str, Any]]:
+        """Loads and caches validation rules from the reference .docx template."""
+        if self._rules_cache is None:
+            try:
+                self._rules_cache = parse_template_rules(self.template_path)
+            except Exception as e:
+                raise TemplateParseError(f"Failed to parse template {self.template_path}: {e}") from e
+        return self._rules_cache
 
     @staticmethod
     def _count_words(text: str) -> int:
-        """Deterministic word count using regex to handle punctuation and whitespace."""
+        """Deterministic word counting using regex to handle punctuation and whitespace consistently."""
         if not text:
             return 0
-        # SELF-HEAL: Implement deterministic word counting as specified in plan
+        # \b\w+\b matches word boundaries, ignoring punctuation and extra whitespace
         return len(re.findall(r'\b\w+\b', text))
+
+    def _extract_sections(self, doc_path: str) -> Dict[str, str]:
+        """
+        Parses a .docx file and groups paragraph text under their preceding Heading styles.
+        Returns a dictionary mapping heading text to accumulated section content.
+        """
+        doc = Document(doc_path)
+        sections: Dict[str, str] = {}
+        current_heading = "Introduction"  # Default section for content preceding any heading
+
+        for para in doc.paragraphs:
+            # Support both English ('Heading') and French ('Titre') style prefixes
+            style_name = para.style.name
+            if style_name.startswith('Heading') or style_name.startswith('Titre'):
+                current_heading = para.text.strip()
+                if not current_heading:
+                    current_heading = "Untitled"
+                sections.setdefault(current_heading, "")
+            else:
+                sections.setdefault(current_heading, "")
+                sections[current_heading] += para.text + " "
+
+        return sections
 
     def validate(self, document_path: str) -> Dict[str, Any]:
         """
-        Validates a document against the template rules.
-        Returns a structured report matching the plan's requirements.
+        Validates a target document against the loaded template rules.
+        Returns a structured compliance report.
         """
-        # SELF-HEAL: Implement missing validate method per plan specification
-        if self._cached_rules is None or self._cached_headings is None:
-            self.load_template()
+        if not os.path.exists(document_path):
+            raise FileNotFoundError(f"Document to validate not found: {document_path}")
 
-        report = {
-            "valid": True,
-            "missing_sections": [],
-            "word_count_violations": [],
-            "total_words": 0,
-            "errors": []
-        }
+        rules = self.load_template()
+        sections = self._extract_sections(document_path)
 
-        try:
-            doc_parser = DocxParser(document_path)
-            doc_headings = doc_parser.extract_headings()
-            
-            # Extract full text for total word count
-            full_text = "\n".join([p.text for p in doc_parser.document.paragraphs])
-            report["total_words"] = self._count_words(full_text)
+        missing_sections: List[str] = []
+        word_count_violations: List[Dict[str, Any]] = []
+        total_words = 0
 
-            for rule in self._cached_rules:
-                section_name = rule["section"]
-                is_mandatory = rule["obligatoire"]
-                min_words = rule["mots_minimum"]
+        # Separate total document rule from section-specific rules
+        total_rule = None
+        section_rules = []
+        for rule in rules:
+            if rule["section"].lower() == "total document":
+                total_rule = rule
+            else:
+                section_rules.append(rule)
 
-                if section_name == "Total document":
-                    if report["total_words"] < min_words:
-                        report["valid"] = False
-                        report["word_count_violations"].append({
-                            "section": "Total document",
-                            "expected": min_words,
-                            "actual": report["total_words"]
-                        })
-                    continue
+        # Evaluate each section rule
+        for rule in section_rules:
+            section_name = rule["section"]
+            is_mandatory = rule["mandatory"]
+            min_words = rule["min_words"]
 
-                if section_name not in doc_headings:
-                    if is_mandatory:
-                        report["valid"] = False
-                        report["missing_sections"].append(section_name)
-                    continue
-
-                section_text = self._extract_section_text(doc_parser.document, section_name)
-                actual_words = self._count_words(section_text)
-                
-                if actual_words < min_words:
-                    report["valid"] = False
-                    report["word_count_violations"].append({
-                        "section": section_name,
-                        "expected": min_words,
-                        "actual": actual_words
-                    })
-
-        except Exception as e:
-            report["valid"] = False
-            report["errors"].append(str(e))
-
-        return report
-
-    @staticmethod
-    def _extract_section_text(document, heading: str) -> str:
-        """Extracts text under a specific heading until the next heading."""
-        text_parts = []
-        capturing = False
-        for para in document.paragraphs:
-            is_heading = para.style.name.startswith("Heading") if para.style else False
-            # SELF-HEAL: Use exact match instead of substring to prevent false positives on similar headings
-            if is_heading and para.text.strip() == heading:
-                capturing = True
-                continue
-            if capturing:
-                if is_heading:
+            # Match rule section name to actual document headings (case-insensitive)
+            matched_text = ""
+            for heading, text in sections.items():
+                if section_name.lower() in heading.lower():
+                    matched_text = text
                     break
-                text_parts.append(para.text)
-        return " ".join(text_parts)
+
+            words_in_section = self._count_words(matched_text)
+            total_words += words_in_section
+
+            if not matched_text and is_mandatory:
+                missing_sections.append(section_name)
+            elif words_in_section < min_words:
+                word_count_violations.append({
+                    "section": section_name,
+                    "expected": min_words,
+                    "actual": words_in_section
+                })
+
+        # Evaluate total document word count
+        if total_rule:
+            total_min = total_rule["min_words"]
+            if total_words < total_min:
+                word_count_violations.append({
+                    "section": "Total document",
+                    "expected": total_min,
+                    "actual": total_words
+                })
+
+        is_valid = len(missing_sections) == 0 and len(word_count_violations) == 0
+
+        return {
+            "is_valid": is_valid,
+            "missing_sections": missing_sections,
+            "word_count_violations": word_count_violations,
+            "total_words": total_words
+        }

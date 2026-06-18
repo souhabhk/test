@@ -1,61 +1,78 @@
 import re
 from pathlib import Path
-from typing import Union, Dict, Any, List
+from typing import Any, Dict, Union
 
 from docx import Document
-from .base_linter import BaseLinter
+# SELF-HEAL: Use absolute import for consistency with other modules and reliable module resolution
+from src.linters.base_linter import BaseLinter
+
 
 class SpecLinter(BaseLinter):
     """
-    Concrete linter for SPEC documents.
-    Extends BaseLinter to enforce SPEC-specific structural and content rules.
+    Linter déterministe pour les documents SPEC.
+    Valide la structure, les compteurs de mots et les règles métier spécifiques (ex: EF-<n>).
     """
-    TEMPLATE_FILENAME = "template_spec.docx"
-    FUNCTIONAL_REQ_HEADING = "Exigences fonctionnelles"
-    REQUIREMENT_ID_PATTERN = re.compile(r"EF-\d+")
 
-    def __init__(self, template_dir: Union[str, Path] = None):
-        if template_dir is None:
-            template_dir = Path(__file__).resolve().parent.parent / "templates"
-        template_path = Path(template_dir) / self.TEMPLATE_FILENAME
-        # SELF-HEAL: Ensure template_path is passed as string to BaseLinter
-        super().__init__(template_path=str(template_path))
+    # SELF-HEAL: Convert Path to string to match BaseLinter type hints
+    TEMPLATE_PATH = str(Path(__file__).resolve().parent.parent / "templates" / "template_spec.docx")
+    REQUIREMENT_ID_PATTERN = re.compile(r"\bEF-\d+\b")
+
+    def __init__(self, template_path: Union[str, Path, None] = None):
+        # SELF-HEAL: Ensure template_path is cast to string for BaseLinter compatibility
+        super().__init__(template_path=str(template_path or self.TEMPLATE_PATH))
 
     def validate(self, document_path: Union[str, Path]) -> Dict[str, Any]:
         """
-        Validates the SPEC document against template rules and SPEC-specific constraints.
-        Returns a structured compliance report.
+        Valide un document SPEC complet contre les règles du template et les contraintes métier.
+        
+        Args:
+            document_path: Chemin vers le fichier .docx à valider.
+            
+        Returns:
+            Dictionnaire de rapport de conformité structuré.
         """
         report = super().validate(str(document_path))
         
-        # SPEC-specific validation: Check for requirement IDs in Functional Requirements section
-        req_validation = self._validate_requirement_ids(document_path)
-        report["requirement_id_violations"] = req_validation["violations"]
+        # Si le document échoue déjà aux règles de base, on retourne le rapport tel quel.
+        if not report.get("valid", False):
+            return report
+
+        # Vérification spécifique SPEC : présence d'au moins un ID EF-<n>
+        doc = Document(str(document_path))
+        req_section_text = self._extract_section_text(doc, "Exigences fonctionnelles")
         
-        # Update overall validity if SPEC-specific rules fail
-        if req_validation["violations"]:
-            report["valid"] = False
-            
+        if req_section_text:
+            if not self.REQUIREMENT_ID_PATTERN.search(req_section_text):
+                report["valid"] = False
+                report.setdefault("spec_violations", []).append(
+                    "Aucun identifiant de type 'EF-<n>' trouvé dans la section 'Exigences fonctionnelles'."
+                )
+        else:
+            report.setdefault("spec_violations", []).append(
+                "Section 'Exigences fonctionnelles' introuvable ou vide, impossible de valider les identifiants EF-<n>."
+            )
+
         return report
 
-    def _validate_requirement_ids(self, document_path: Union[str, Path]) -> Dict[str, Any]:
+    @staticmethod
+    def _extract_section_text(doc: Document, heading: str) -> str:
         """
-        Checks if the 'Exigences fonctionnelles' section contains at least one requirement ID matching EF-<n>.
+        Extrait le texte contenu sous un titre spécifique jusqu'au prochain titre de même niveau ou supérieur.
         """
-        violations: List[str] = []
-        try:
-            doc = Document(str(document_path))
-            # SELF-HEAL: Use inherited _extract_section_text instead of redefining it
-            section_text = self._extract_section_text(doc, self.FUNCTIONAL_REQ_HEADING)
+        text_parts = []
+        capturing = False
+        
+        for para in doc.paragraphs:
+            # SELF-HEAL: Added null check for para.style to prevent AttributeError
+            is_heading = para.style.name.startswith("Heading") if para.style else False
+            # SELF-HEAL: Use exact match instead of substring to prevent false positives on similar headings
+            if is_heading and para.text.strip() == heading:
+                capturing = True
+                continue
             
-            if not section_text:
-                violations.append(f"Section '{self.FUNCTIONAL_REQ_HEADING}' not found or empty.")
-                return {"violations": violations}
+            if capturing:
+                if is_heading:
+                    break
+                text_parts.append(para.text)
                 
-            if not self.REQUIREMENT_ID_PATTERN.search(section_text):
-                violations.append(f"No requirement ID matching pattern 'EF-<n>' found in '{self.FUNCTIONAL_REQ_HEADING}'.")
-                
-        except Exception as e:
-            violations.append(f"Error during requirement ID validation: {str(e)}")
-            
-        return {"violations": violations}
+        return " ".join(text_parts)

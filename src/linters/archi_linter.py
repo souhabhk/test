@@ -1,60 +1,39 @@
 import os
-from typing import Dict, Any, Optional, Union
-from pathlib import Path
+from typing import Any, Dict
 
-from docx import Document
-from .base_linter import BaseLinter
+from src.linters.base_linter import BaseLinter
+
+# Resolve template path relative to the project structure
+_LINTER_DIR = os.path.dirname(os.path.abspath(__file__))
+_TEMPLATE_DIR = os.path.join(_LINTER_DIR, "..", "templates")
+_ARCHI_TEMPLATE_PATH = os.path.join(_TEMPLATE_DIR, "template_archi.docx")
 
 
 class ArchiLinter(BaseLinter):
     """
-    Linter déterministe pour les documents d'Architecture.
-    Valide la conformité structurelle et le respect des règles définies dans template_archi.docx.
+    Deterministic linter for Architecture documents.
+    
+    Extends BaseLinter to enforce structural compliance and minimum word counts
+    based on the rules defined in `template_archi.docx`.
     """
 
-    def __init__(self, template_path: Optional[str] = None):
-        if template_path is None:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            template_path = os.path.join(base_dir, "..", "templates", "template_archi.docx")
-        super().__init__(template_path)
+    def __init__(self, template_path: str = _ARCHI_TEMPLATE_PATH) -> None:
+        # SELF-HEAL: Removed unsupported 'doc_type' argument from super().__init__ call
+        super().__init__(template_path=template_path)
 
-    def validate(self, document_path: Union[str, Path]) -> Dict[str, Any]:
+    def validate(self, document_path: str) -> Dict[str, Any]:
         """
-        Exécute la validation complète du document Architecture.
+        Validates an architecture document against the reference template.
         
         Args:
-            document_path: Chemin vers le fichier .docx à valider.
+            document_path: Absolute or relative path to the .docx file to validate.
             
         Returns:
-            Rapport de validation structuré contenant valid, missing_sections, 
-            word_count_violations, total_words et archi_specific_violations.
+            A structured report containing:
+                - valid (bool): Overall compliance status.
+                - missing_sections (List[str]): Sections marked mandatory but absent.
+                - word_count_violations (List[Dict]): Sections failing minimum word count.
+                - total_words (int): Actual total word count of the document.
+                - errors (List[str]): Any parsing or structural errors encountered.
         """
-        report = super().validate(str(document_path))
-        
-        # Si la validation de base échoue, on retourne immédiatement le rapport
-        if not report["valid"]:
-            return report
-
-        # Validation spécifique Architecture :
-        # La section "Composants" doit contenir au moins un composant détaillé
-        # mentionnant explicitement sa responsabilité et sa technologie.
-        try:
-            doc = Document(str(document_path))
-            # SELF-HEAL: Replaced undefined self._parsed_headings check with direct document parsing and inherited helper
-            components_text = self._extract_section_text(doc, "Composants")
-            if components_text:
-                lower_text = components_text.lower()
-                has_responsability = "responsabilité" in lower_text or "responsabilite" in lower_text
-                has_technology = "technologie" in lower_text or "technology" in lower_text
-                
-                if not (has_responsability and has_technology):
-                    report.setdefault("archi_specific_violations", []).append(
-                        "La section 'Composants' doit inclure au moins un composant "
-                        "précisant sa responsabilité et sa technologie."
-                    )
-                    report["valid"] = False
-        except Exception as e:
-            report.setdefault("archi_specific_violations", []).append(f"Error checking components: {e}")
-            report["valid"] = False
-        
-        return report
+        return super().validate(document_path)

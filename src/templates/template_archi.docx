@@ -1,46 +1,40 @@
-from docx import Document
 import os
+from docx import Document
 
 def generate_template():
+    os.makedirs("src/templates", exist_ok=True)
     doc = Document()
     
-    doc.add_heading('Document d\'Architecture', level=0)
+    headings = [
+        "Vue d'ensemble",
+        "Composants",
+        "Flux de données",
+        "Déploiement",
+        "Sécurité",
+        "Décisions techniques (ADR)"
+    ]
     
-    doc.add_heading('Vue d\'ensemble', level=1)
-    doc.add_paragraph('Contenu de la vue d\'ensemble...')
-    
-    doc.add_heading('Composants', level=1)
-    doc.add_paragraph('Composant Utilisateur : Responsable de l\'authentification et de la gestion des profils. Technologie : Node.js/Express.')
-    doc.add_paragraph('Composant Données : Responsable du stockage et de la récupération des informations. Technologie : PostgreSQL.')
-    
-    doc.add_heading('Flux de données', level=1)
-    doc.add_paragraph('Description des interactions et flux...')
-    
-    doc.add_heading('Déploiement', level=1)
-    doc.add_paragraph('Infrastructure et stratégie de déploiement...')
-    
-    doc.add_heading('Sécurité', level=1)
-    doc.add_paragraph('Politiques de sécurité et conformité...')
-    
-    doc.add_heading('Décisions techniques (ADR)', level=1)
-    doc.add_paragraph('Architectural Decision Records...')
-    
-    doc.add_heading('Règles de validation', level=2)
-    table = doc.add_table(rows=1, cols=3)
-    table.style = 'Table Grid'
-    
-    headers = ['Section', 'Obligatoire', 'Mots minimum']
-    for i, header in enumerate(headers):
-        table.rows[0].cells[i].text = header
+    for heading in headings:
+        doc.add_heading(heading, level=1)
+        doc.add_paragraph("Contenu de la section...")
         
+    doc.add_heading("Règles de validation", level=2)
+    table = doc.add_table(rows=1, cols=3)
+    table.style = "Table Grid"
+    
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].text = "Section"
+    hdr_cells[1].text = "Obligatoire"
+    hdr_cells[2].text = "Mots minimum"
+    
     rules = [
-        ('Vue d\'ensemble', 'Oui', '80'),
-        ('Composants', 'Oui', '150'),
-        ('Flux de données', 'Oui', '100'),
-        ('Déploiement', 'Oui', '50'),
-        ('Sécurité', 'Oui', '40'),
-        ('Décisions techniques', 'Non', '50'),
-        ('Total document', 'Oui', '600')
+        ("Vue d'ensemble", "Oui", "80"),
+        ("Composants", "Oui", "150"),
+        ("Flux de données", "Oui", "100"),
+        ("Déploiement", "Oui", "50"),
+        ("Sécurité", "Oui", "40"),
+        ("Décisions techniques", "Non", "50"),
+        ("Total document", "Oui", "600")
     ]
     
     for section, mandatory, min_words in rules:
@@ -49,8 +43,9 @@ def generate_template():
         row_cells[1].text = mandatory
         row_cells[2].text = min_words
         
-    os.makedirs('src/templates', exist_ok=True)
-    doc.save('src/templates/template_archi.docx')
+    output_path = "src/templates/template_archi.docx"
+    doc.save(output_path)
+    print(f"Template generated: {output_path}")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     generate_template()

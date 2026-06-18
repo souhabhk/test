@@ -1,10 +1,9 @@
 import os
 from docx import Document
 
-
 def create_spec_template():
     doc = Document()
-
+    
     headings = [
         "Introduction",
         "Contexte",
@@ -13,20 +12,21 @@ def create_spec_template():
         "Contraintes",
         "Glossaire"
     ]
-
+    
     for heading in headings:
         doc.add_heading(heading, level=1)
-        doc.add_paragraph("")
-
-    doc.add_heading("Règles de validation", level=2)
+        if heading == "Exigences fonctionnelles":
+            doc.add_paragraph("EF-1: Description de l'exigence fonctionnelle...")
+        else:
+            doc.add_paragraph(f"[Contenu pour {heading}]")
+            
+    doc.add_heading("Règles de validation", level=1)
     table = doc.add_table(rows=1, cols=3)
     table.style = "Table Grid"
-
-    header_cells = table.rows[0].cells
-    header_cells[0].text = "Section"
-    header_cells[1].text = "Obligatoire"
-    header_cells[2].text = "Mots minimum"
-
+    
+    for i, header in enumerate(["Section", "Obligatoire", "Mots minimum"]):
+        table.rows[0].cells[i].text = header
+        
     rules = [
         ("Introduction", "Oui", "50"),
         ("Contexte", "Oui", "100"),
@@ -36,17 +36,16 @@ def create_spec_template():
         ("Glossaire", "Non", "20"),
         ("Total document", "Oui", "500")
     ]
-
-    for section, mandatory, min_words in rules:
-        row_cells = table.add_row().cells
-        row_cells[0].text = section
-        row_cells[1].text = mandatory
-        row_cells[2].text = min_words
-
+    
+    for section, oblig, mots in rules:
+        row = table.add_row()
+        row.cells[0].text = section
+        row.cells[1].text = oblig
+        row.cells[2].text = mots
+        
     output_path = os.path.join("src", "templates", "template_spec.docx")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     doc.save(output_path)
-
 
 if __name__ == "__main__":
     create_spec_template()

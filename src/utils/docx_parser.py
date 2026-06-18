@@ -1,113 +1,95 @@
 """
-Utility module for parsing .docx templates used in deterministic linting.
-Extracts heading hierarchies and validation rules tables from reference documents.
+Utility module for parsing .docx templates to extract heading structures and validation rules.
 """
+from pathlib import Path
+from typing import List, Dict, Any, Union
 
-from typing import List, Dict, Any, Optional
 from docx import Document
 
-
 class TemplateParseError(Exception):
-    """Raised when a .docx template does not conform to the expected structure."""
+    """Raised when a .docx template fails to parse or lacks expected structure."""
     pass
-
 
 class DocxParser:
     """
-    Parses a .docx template to extract expected headings and validation rules.
-    Results are cached in memory after the first instantiation to avoid repeated I/O.
+    Parses a .docx file to extract document headings and a structured rules table.
+    Designed to read templates maintained by BA/PO.
     """
-
-    def __init__(self, docx_path: str):
-        self.docx_path = docx_path
-        self._headings: Optional[List[str]] = None
-        self._rules: Optional[List[Dict[str, Any]]] = None
-        self._parse()
-
-    def _parse(self) -> None:
-        """Loads the document and triggers extraction of headings and rules."""
+    
+    def __init__(self, template_path: Union[str, Path]):
+        self.template_path = Path(template_path)
+        if not self.template_path.exists():
+            raise TemplateParseError(f"Template file not found: {self.template_path}")
         try:
-            self._doc = Document(self.docx_path)
-        # SELF-HEAL: Replaced non-existent PackageNotFoundError import with generic Exception catch for python-docx compatibility
+            self.document = Document(str(self.template_path))
         except Exception as e:
-            raise TemplateParseError(f"Failed to open document: {e}") from e
+            raise TemplateParseError(f"Failed to read document: {e}") from e
 
-        self._extract_headings()
-        self._parse_rules_table()
-
-    def _extract_headings(self) -> None:
-        """Extracts an ordered list of heading texts from the document."""
+    def extract_headings(self) -> List[str]:
+        """
+        Extracts an ordered list of heading texts from the document.
+        Only paragraphs with styles starting with 'Heading' are considered.
+        """
         headings = []
-        for paragraph in self._doc.paragraphs:
-            # Standard Word heading styles start with 'Heading'
-            if paragraph.style.name.startswith('Heading'):
+        for paragraph in self.document.paragraphs:
+            style_name = paragraph.style.name if paragraph.style else ""
+            if style_name.startswith("Heading"):
                 text = paragraph.text.strip()
                 if text:
                     headings.append(text)
-        self._headings = headings
+        return headings
 
-    def _parse_rules_table(self) -> None:
+    def parse_rules_table(self) -> List[Dict[str, Any]]:
         """
-        Locates the 3-column validation rules table and parses it into a list of dicts.
-        Expected headers: Section | Obligatoire | Mots minimum
+        Parses the 3-column rules table from the document.
+        Expects headers: Section | Obligatoire | Mots minimum
+        Returns a list of dictionaries with keys: section, obligatoire, mots_minimum.
         """
-        rules_table = None
-        for table in self._doc.tables:
+        target_table = None
+        
+        for table in self.document.tables:
             if len(table.rows) < 2:
                 continue
-            header_cells = [cell.text.strip().lower() for cell in table.rows[0].cells]
-            if 'section' in header_cells and 'obligatoire' in header_cells and 'mots minimum' in header_cells:
-                rules_table = table
+            header_texts = [cell.text.replace('\n', ' ').strip().lower() for cell in table.rows[0].cells]
+            # Check for expected headers
+            if "section" in header_texts and "obligatoire" in header_texts and "mots minimum" in header_texts:
+                target_table = table
                 break
-
-        if rules_table is None:
+        
+        if target_table is None:
             raise TemplateParseError(
-                "Validation rules table not found. Expected headers: 'Section', 'Obligatoire', 'Mots minimum'."
+                "Rules table not found. Ensure it contains headers: Section | Obligatoire | Mots minimum"
             )
-
-        header_lower = [cell.text.strip().lower() for cell in rules_table.rows[0].cells]
-        sec_idx = header_lower.index('section')
-        obl_idx = header_lower.index('obligatoire')
-        min_idx = header_lower.index('mots minimum')
-
+            
         rules = []
-        for row in rules_table.rows[1:]:
-            cells = row.cells
-            if len(cells) <= max(sec_idx, obl_idx, min_idx):
+        # Iterate over data rows (skip header)
+        for row in target_table.rows[1:]:
+            cell_texts = [cell.text.replace('\n', ' ').strip() for cell in row.cells]
+            
+            # Skip completely empty rows
+            if not any(cell_texts):
                 continue
-
-            section = cells[sec_idx].text.strip()
+                
+            section = cell_texts[0] if len(cell_texts) > 0 else ""
+            obligatoire_str = cell_texts[1] if len(cell_texts) > 1 else "Oui"
+            mots_min_str = cell_texts[2] if len(cell_texts) > 2 else "0"
+            
             if not section:
                 continue
-
-            mandatory_raw = cells[obl_idx].text.strip().lower()
-            mandatory = mandatory_raw in ('oui', 'yes', 'true', '1')
-
-            min_words_raw = cells[min_idx].text.strip()
+                
+            # Normalize boolean
+            obligatoire = obligatoire_str.lower() in ("oui", "yes", "true", "1")
+            
+            # Normalize integer
             try:
-                min_words = int(min_words_raw)
+                mots_minimum = int(mots_min_str)
             except ValueError:
-                raise TemplateParseError(
-                    f"Invalid word count value '{min_words_raw}' for section '{section}'."
-                )
-
+                mots_minimum = 0
+                
             rules.append({
-                'section': section,
-                'mandatory': mandatory,
-                'min_words': min_words
+                "section": section,
+                "obligatoire": obligatoire,
+                "mots_minimum": mots_minimum
             })
-        self._rules = rules
-
-    @property
-    def headings(self) -> List[str]:
-        """Returns the cached list of headings extracted from the template."""
-        if self._headings is None:
-            raise TemplateParseError("Headings not parsed.")
-        return self._headings
-
-    @property
-    def rules(self) -> List[Dict[str, Any]]:
-        """Returns the cached list of validation rules parsed from the template."""
-        if self._rules is None:
-            raise TemplateParseError("Rules not parsed.")
-        return self._rules
+            
+        return rules

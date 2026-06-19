@@ -1,29 +1,41 @@
+"""Linters package for deterministic validation of AI-generated documents."""
+
+# SELF-HEAL: Removed unused 'os' import
+from pathlib import Path
+
+# SELF-HEAL: Use relative imports for package consistency
+from .base_linter import ValidationReport
 from .spec_linter import SpecLinter
 from .archi_linter import ArchiLinter
-# SELF-HEAL: Import ValidationReport for accurate type hinting
-from .base_linter import ValidationReport
-
-__all__ = ["SpecLinter", "ArchiLinter", "validate_document"]
 
 
 def validate_document(doc_path: str, doc_type: str) -> ValidationReport:
     """
-    Validates a generated document against its corresponding reference template.
+    Validates a document against the appropriate template and rules.
     
     Args:
-        doc_path: Absolute or relative path to the .docx file to validate.
-        doc_type: Document category ('spec' or 'archi').
+        doc_path: Path to the .docx file to validate.
+        doc_type: Type of document ('spec' or 'archi').
         
     Returns:
-        Validation report containing success status and detailed issues.
+        ValidationReport containing results and any errors.
     """
-    doc_type = doc_type.strip().lower()
-    # SELF-HEAL: Pass required template_path argument to linter constructors
+    # Path sanitization & validation
+    resolved_path = Path(doc_path).resolve()
+    if not resolved_path.is_file():
+        raise FileNotFoundError(f"Document not found: {resolved_path}")
+    if resolved_path.suffix.lower() != ".docx":
+        raise ValueError(f"Unsupported file extension: {resolved_path.suffix}. Expected .docx")
+
+    doc_type = doc_type.lower().strip()
     if doc_type == "spec":
-        linter = SpecLinter("templates/spec_template.docx")
+        linter = SpecLinter()
     elif doc_type == "archi":
-        linter = ArchiLinter("templates/archi_template.docx")
+        linter = ArchiLinter()
     else:
-        raise ValueError(f"Unsupported document type '{doc_type}'. Expected 'spec' or 'archi'.")
+        raise ValueError(f"Unsupported document type: {doc_type}. Expected 'spec' or 'archi'.")
         
-    return linter.validate_structure(doc_path)
+    return linter.validate_structure(str(resolved_path))
+
+
+__all__ = ["SpecLinter", "ArchiLinter", "validate_document", "ValidationReport"]

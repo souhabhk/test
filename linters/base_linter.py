@@ -1,146 +1,145 @@
-import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Any
 
 from docx import Document
-
+from docx.text.paragraph import Paragraph
 
 @dataclass
-class ValidationIssue:
+class SectionValidationResult:
     section: str
-    rule: str
-    message: str
-    expected: Optional[str] = None
-    actual: Optional[str] = None
-
+    is_present: bool
+    is_mandatory: bool
+    min_words: int
+    actual_words: int
+    passed: bool
+    errors: List[str] = field(default_factory=list)
 
 @dataclass
 class ValidationReport:
     is_valid: bool = True
-    issues: List[ValidationIssue] = field(default_factory=list)
-    section_stats: Dict[str, Dict] = field(default_factory=dict)
-
-    def add_issue(self, section: str, rule: str, message: str, expected: Optional[str] = None, actual: Optional[str] = None) -> None:
-        self.is_valid = False
-        self.issues.append(ValidationIssue(section, rule, message, expected, actual))
-
+    section_results: List[SectionValidationResult] = field(default_factory=list)
+    total_words: int = 0
+    global_errors: List[str] = field(default_factory=list)
+    # SELF-HEAL: Added missing fields used by subclass linters to prevent AttributeError
+    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
 
 class BaseDocumentLinter:
-    """Shared logic for template parsing, heading extraction, word counting, and rule evaluation."""
+    """Classe de base pour la validation déterministe de documents .docx."""
+    
+    def __init__(self, template_path: Optional[str] = None):
+        # SELF-HEAL: Added template_path parameter to match subclass initialization and plan intent
+        self.template_rules: Dict[str, Dict[str, Any]] = {}
+        self._total_rule: Optional[Dict[str, Any]] = None
+        if template_path:
+            self.load_template(template_path)
 
-    def __init__(self, template_path: str) -> None:
-        if not template_path.endswith('.docx'):
-            raise ValueError("Template must be a .docx file")
-        self.template_path = os.path.abspath(template_path)
-        self.rules: Dict[str, Dict] = {}
-        self.load_template(self.template_path)
+    @staticmethod
+    def _validate_path(path: str) -> Path:
+        """Résout et valide le chemin pour prévenir les attaques par traversal."""
+        resolved = Path(path).resolve()
+        if not resolved.exists():
+            raise FileNotFoundError(f"Fichier introuvable : {path}")
+        if resolved.suffix.lower() != '.docx':
+            raise ValueError("Seuls les fichiers .docx sont autorisés.")
+        return resolved
 
-    def load_template(self, template_path: str) -> Dict[str, Dict]:
-        """Parses the rules table from the template document."""
-        doc = Document(template_path)
-        rules_config: Dict[str, Dict] = {}
-        rules_found = False
-
+    def load_template(self, template_path: str) -> Dict[str, Dict[str, Any]]:
+        """Charge et parse le tableau de règles depuis un template .docx."""
+        resolved_path = self._validate_path(template_path)
+        doc = Document(str(resolved_path))
+        rules: Dict[str, Dict[str, Any]] = {}
+        
         for table in doc.tables:
             for row in table.rows:
                 cells = [cell.text.strip() for cell in row.cells]
-                # Skip header row
-                if cells[0].lower() == 'section':
+                if len(cells) < 3:
                     continue
-                if not cells[0] or len(cells) < 3:
-                    continue
-
+                    
                 section_name = cells[0]
                 mandatory_str = cells[1].lower()
-                min_words_str = cells[2].strip()
-
-                mandatory = mandatory_str in ('oui', 'true', 'yes', '1')
                 try:
-                    min_words = int(min_words_str)
+                    min_words = int(cells[2])
                 except ValueError:
                     min_words = 0
+                    
+                is_mandatory = mandatory_str in ("oui", "yes", "true", "1")
+                
+                if section_name.lower() == "total document":
+                    self._total_rule = {"mandatory": True, "min_words": min_words}
+                else:
+                    rules[section_name] = {"mandatory": is_mandatory, "min_words": min_words}
+                    
+        self.template_rules = rules
+        return rules
 
-                rules_config[section_name] = {
-                    "mandatory": mandatory,
-                    "min_words": min_words
-                }
-                rules_found = True
-
-        if not rules_found:
-            raise ValueError(f"No validation rules table found in template: {template_path}")
-
-        self.rules = rules_config
-        return self.rules
-
-    def extract_sections(self, doc_path: str) -> Dict[str, List]:
-        """Iterates through paragraphs, groups content by Heading 1."""
-        if not doc_path.endswith('.docx'):
-            raise ValueError("Target document must be a .docx file")
-
-        doc = Document(doc_path)
-        sections: Dict[str, List] = {}
+    def extract_sections(self, doc_path: str) -> Dict[str, List[Paragraph]]:
+        """Extrait les paragraphes groupés par titres de niveau 1."""
+        resolved_path = self._validate_path(doc_path)
+        doc = Document(str(resolved_path))
+        sections: Dict[str, List[Paragraph]] = {}
         current_section: Optional[str] = None
-
-        for paragraph in doc.paragraphs:
-            # Check specifically for Heading 1 style (case-insensitive for robustness)
-            if paragraph.style.name.lower() == 'heading 1':
-                current_section = paragraph.text.strip()
+        
+        for para in doc.paragraphs:
+            if para.style.name == 'Heading 1':
+                current_section = para.text.strip()
+                # SELF-HEAL: Prevent empty heading text from creating a dummy section key that swallows subsequent paragraphs
                 if current_section and current_section not in sections:
                     sections[current_section] = []
             elif current_section:
-                sections[current_section].append(paragraph)
-
+                sections[current_section].append(para)
+                
         return sections
 
-    def count_words(self, paragraphs: List) -> int:
-        """Counts words in a list of paragraphs deterministically."""
+    def count_words(self, paragraphs: List[Paragraph]) -> int:
+        """Compte les mots dans une liste de paragraphes, ignorant les espaces vides."""
         total = 0
-        for p in paragraphs:
-            total += len(p.text.split())
+        for para in paragraphs:
+            text = para.text.strip()
+            if text:
+                total += len(text.split())
         return total
 
     def validate_structure(self, target_doc_path: str) -> ValidationReport:
-        """Compares extracted sections against template rules, checks mandatory presence & word thresholds."""
+        """Valide la structure et les seuils de mots selon les règles du template."""
         report = ValidationReport()
         sections = self.extract_sections(target_doc_path)
-
-        # Initialize stats for all expected sections
-        for sec_name in self.rules:
-            report.section_stats[sec_name] = {
-                "found": False,
-                "word_count": 0,
-                "mandatory": self.rules[sec_name]["mandatory"]
-            }
-
-        # Evaluate found sections against rules
-        for section_name, paragraphs in sections.items():
-            if section_name in self.rules:
-                word_count = self.count_words(paragraphs)
-                report.section_stats[section_name].update({
-                    "found": True,
-                    "word_count": word_count
-                })
-
-                rule = self.rules[section_name]
-                if word_count < rule["min_words"]:
-                    report.add_issue(
-                        section=section_name,
-                        rule="min_words",
-                        message=f"Section '{section_name}' has {word_count} words, minimum required is {rule['min_words']}.",
-                        expected=str(rule["min_words"]),
-                        actual=str(word_count)
-                    )
-
-        # Check for missing mandatory sections
-        for section_name, rule in self.rules.items():
-            if section_name not in sections:
-                if rule["mandatory"]:
-                    report.add_issue(
-                        section=section_name,
-                        rule="mandatory_presence",
-                        message=f"Mandatory section '{section_name}' is missing.",
-                        expected="Present",
-                        actual="Missing"
-                    )
-
+        
+        all_words = 0
+        
+        for section_name, rule in self.template_rules.items():
+            res = SectionValidationResult(
+                section=section_name,
+                is_mandatory=rule["mandatory"],
+                min_words=rule["min_words"],
+                is_present=False,
+                actual_words=0,
+                passed=True
+            )
+            
+            if section_name in sections:
+                res.is_present = True
+                res.actual_words = self.count_words(sections[section_name])
+                all_words += res.actual_words
+                
+                if res.actual_words < res.min_words:
+                    res.passed = False
+                    res.errors.append(f"Moins de mots requis ({res.actual_words}/{res.min_words})")
+            else:
+                if res.is_mandatory:
+                    res.passed = False
+                    res.errors.append("Section obligatoire manquante")
+                    
+            report.section_results.append(res)
+            if not res.passed:
+                report.is_valid = False
+                
+        if self._total_rule:
+            total_min = self._total_rule["min_words"]
+            if all_words < total_min:
+                report.is_valid = False
+                report.global_errors.append(f"Total mots insuffisant ({all_words}/{total_min})")
+                
+        report.total_words = all_words
         return report

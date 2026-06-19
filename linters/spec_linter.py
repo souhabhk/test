@@ -1,48 +1,64 @@
 import re
-import logging
-from typing import List, Dict, Any
+from dataclasses import dataclass, field
+from typing import List
 
+# SELF-HEAL: Use relative imports for package consistency
 from .base_linter import BaseDocumentLinter, ValidationReport
 
-logger = logging.getLogger(__name__)
+
+@dataclass
+class SpecValidationReport(ValidationReport):
+    """Extended validation report for SPEC documents."""
+    ef_identifiers_found: List[str] = field(default_factory=list)
 
 
 class SpecLinter(BaseDocumentLinter):
     """
-    SPEC-specific document linter.
-    Validates structural compliance based on spec_template.docx rules
-    and enforces domain-specific patterns (e.g., EF-<n> identifiers).
+    Linter for validating SPEC documents against reference templates.
+    Adds domain-specific checks such as functional requirement identifiers (EF-<n>).
     """
 
-    FUNCTIONAL_REQS_SECTION = "Exigences fonctionnelles"
-    EF_PATTERN = re.compile(r'\bEF-\d+\b', re.IGNORECASE)
+    def __init__(self, template_path: str = "templates/spec_template.docx"):
+        # SELF-HEAL: Pass template_path to base class which now accepts it
+        super().__init__(template_path)
+        # Case-insensitive regex with word boundaries to avoid false positives (e.g., REF-123)
+        self.ef_pattern = re.compile(r'\bEF-\d+\b', re.IGNORECASE)
 
-    def validate_structure(self, target_doc_path: str) -> ValidationReport:
+    def validate_structure(self, target_doc_path: str) -> SpecValidationReport:
         """
-        Validates the target SPEC document against template rules and SPEC-specific constraints.
+        Validates the structure of a SPEC document.
+        Checks mandatory sections, word counts, and presence of EF-<n> identifiers.
         """
-        # SELF-HEAL: Base class returns ValidationReport with 'issues' list, not errors/warnings/info dicts.
-        # Replaced incorrect attribute access with direct report inheritance and add_issue calls.
-        report = super().validate_structure(target_doc_path)
-
-        # SPEC-specific validation: EF-<n> pattern check
-        sections = self.extract_sections(target_doc_path)
+        # Run base validation (mandatory sections & word counts)
+        base_report = super().validate_structure(target_doc_path)
         
-        if self.FUNCTIONAL_REQS_SECTION in sections:
-            paragraphs = sections[self.FUNCTIONAL_REQS_SECTION]
-            section_text = " ".join(p.text for p in paragraphs if p.text)
-            matches = self.EF_PATTERN.findall(section_text)
-
-            if not matches:
-                report.add_issue(
-                    section=self.FUNCTIONAL_REQS_SECTION,
-                    rule="ef_pattern",
-                    message="Missing functional requirement identifiers. At least one 'EF-<n>' pattern is required."
-                )
-            else:
-                logger.info(f"Found {len(matches)} functional requirement identifier(s): {', '.join(matches)}")
-        else:
-            # Base validation already flags missing mandatory sections.
-            pass
-
+        # SELF-HEAL: Properly initialize subclass report with all base fields to prevent missing data
+        report = SpecValidationReport(
+            is_valid=base_report.is_valid,
+            section_results=list(base_report.section_results),
+            total_words=base_report.total_words,
+            global_errors=list(base_report.global_errors),
+            errors=list(base_report.errors),
+            warnings=list(base_report.warnings),
+            ef_identifiers_found=[]
+        )
+        
+        # Extract sections for SPEC-specific checks
+        sections = self.extract_sections(target_doc_path)
+        ef_paragraphs = sections.get("Exigences fonctionnelles", [])
+        
+        # Combine text from all paragraphs to avoid split-boundary issues
+        ef_section_content = " ".join([p.text for p in ef_paragraphs])
+        
+        # Find all EF-<n> identifiers
+        ef_matches = self.ef_pattern.findall(ef_section_content)
+        report.ef_identifiers_found = ef_matches
+        
+        # Validate presence of at least one identifier
+        if not ef_matches:
+            report.errors.append(
+                "Exigences fonctionnelles: Au moins un identifiant de type 'EF-<n>' est requis."
+            )
+            report.is_valid = False
+            
         return report

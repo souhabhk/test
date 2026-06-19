@@ -1,0 +1,60 @@
+import os
+from docx import Document
+
+
+def generate_archi_template(output_path: str = "templates/archi_template.docx") -> None:
+    """Generates the Architecture reference template (.docx) with headings and validation rules."""
+    dir_path = os.path.dirname(output_path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+        
+    doc = Document()
+    
+    # Expected headings structure
+    headings = [
+        "Vue d'ensemble",
+        "Composants",
+        "Flux de données",
+        "Déploiement",
+        "Sécurité",
+        "Décisions techniques (ADR)"
+    ]
+    
+    for heading_text in headings:
+        doc.add_heading(heading_text, level=1)
+        
+    # Add spacing before the rules table
+    doc.add_paragraph()
+    
+    # Create the validation rules table
+    table = doc.add_table(rows=1, cols=3)
+    table.style = "Table Grid"
+    
+    # Header row
+    header_cells = table.rows[0].cells
+    header_cells[0].text = "Section"
+    header_cells[1].text = "Obligatoire"
+    header_cells[2].text = "Mots minimum"
+    
+    # Rules data
+    rules = [
+        ("Vue d'ensemble", "Oui", "80"),
+        ("Composants", "Oui", "150"),
+        ("Flux de données", "Oui", "100"),
+        ("Déploiement", "Oui", "50"),
+        ("Sécurité", "Oui", "40"),
+        ("Décisions techniques", "Non", "50"),
+        ("Total document", "Oui", "600"),
+    ]
+    
+    for section, mandatory, min_words in rules:
+        row_cells = table.add_row().cells
+        row_cells[0].text = section
+        row_cells[1].text = mandatory
+        row_cells[2].text = min_words
+        
+    doc.save(output_path)
+
+
+if __name__ == "__main__":
+    generate_archi_template()
